@@ -131,7 +131,7 @@ def RLCresponse(times, R, L, C, B1, B2, plot=False):
     '''
     R = float(R)
     alpha = R/(2*L)
-    damp = R/2 * np.sqrt(C/L) #damping factor: underdamped if smaller than 1
+    damp = R/2. * np.sqrt(C/L) #damping factor: underdamped if smaller than 1
     print 'damping factor is ', damp
     wr = 1./np.sqrt(L*C) #resonance
     print 'resonance freq is ', wr/(2*pi)/1e9, 'GHz'
@@ -143,7 +143,11 @@ def RLCresponse(times, R, L, C, B1, B2, plot=False):
     elif damp > 1:
         print 'overdamped regime does not work yet!!'
         def resp(t):
-            return .2*np.exp(damp + np.sqrt(damp*damp - 1)*-wr*t) + .2*np.exp(damp - np.sqrt(damp*damp - 1)*-wr*t) 
+            return .2*np.exp(damp + np.sqrt(damp*damp - 1)*-1*wr*t) + .2*np.exp(damp - np.sqrt(damp*damp - 1)*-1*wr*t) 
+    elif damp == 1:
+        print 'critically damped!'
+        def resp(t):
+            return B1 * t * np.exp(-alpha*t) + B2 * np.exp(-alpha*t)
 
     
     if plot:
@@ -238,10 +242,10 @@ def inputAnt(tx, amps, BW=400e6, type='lor', plot=False):
         #B1 = .4
         #B2 = 1
         R = .1
-        L = .1e-9
+        L = .001e-9
         C = .1e-9
         B1 = .4
-        B2 = 1
+        B2 = .1
         
         rlcTime = RLCresponse(tx[:len(tx)/2], R, L, C, B1, B2)
         #displace RLCtime to the center
@@ -255,8 +259,8 @@ def inputAnt(tx, amps, BW=400e6, type='lor', plot=False):
 def sampleBoxResponse(tx, amps, plot=False):
     #parameters
     R = .1
-    L = 1e-9
-    C = 1e-9
+    L = .1e-9
+    C = .1e-9
     B1 = 0
     B2 = 1
 
@@ -370,6 +374,9 @@ def main(pulse='dc'):
     #For direct coupling: Mix with box response and output antenna
     boxSig = sampleBoxResponse(times, inpAnt)
     outpAntD = inputAnt(times, boxSig, type=atype)
+
+    plotr2(times, outpAntD)
+    return
     #plotr(outpAntD)
 
     #couple into yig
@@ -422,16 +429,22 @@ def main(pulse='dc'):
     sqdat = np.sqrt(rdat*np.conj(rdat) + idat*np.conj(idat))
     sqmdat = np.sqrt(rdat*np.conj(rdat) - idat*np.conj(idat))
 
-    fig, ((ax1, ax2),(ax3, ax4)) = plt.subplots(2,2)
+    fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
     im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower')
     im2 = ax2.imshow(np.transpose(idat), cmap=cmap, aspect=500000, origin='lower')
     im3 = ax3.imshow(np.transpose(sqdat), cmap=cmap, aspect=500000, origin='lower')
     im4 = ax4.imshow(np.transpose(sqmdat), cmap=cmap, aspect=500000, origin='lower')
+    im5 = ax5.imshow(np.transpose(abs(rdat)), cmap=cmap, aspect=500000, origin='lower')
+    im6 = ax6.imshow(np.transpose(abs(idat)), cmap=cmap, aspect=500000, origin='lower')
     im1.set_extent([currents[0], currents[-1], times[0], times[800]])
     im2.set_extent([currents[0], currents[-1], times[0], times[800]])
     im3.set_extent([currents[0], currents[-1], times[0], times[800]])
     im4.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im5.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im6.set_extent([currents[0], currents[-1], times[0], times[800]])
+    ax1.set_title('real')
     plt.show()
+
     #return pdata
      
 def inYig(freqs, inputF, I, f0, d=ad):
@@ -474,6 +487,305 @@ def inYig(freqs, inputF, I, f0, d=ad):
     
     return newWave
 
+def main3(pulse='squ'):
+    '''
+    Try to do the simulation more fully - simulate the YIG interaction with much higher time resolution
+    and then apply all the measurement-like filtering that we actually use.
+    '''
+
+    #couplingConstant = .1
+    
+    times = np.arange(0, 800e-9, .05e-9)
+    sf = 1./(times[1]-times[0])
+    print 'sampling frequency', sf/1e9, ' GHz'
+    freqs = np.linspace(-sf/2,sf/2.,len(times))
+    #generate input pulse
+    if pulse == 'squ':
+        inp = squarePulseSin(times)
+    elif pulse == 'dc':
+        inp = squarePulse(times)
+    elif pulse == 'gauss':
+        inp = gaussPulse(times)
+
+    #mix with input antenna
+    atype = 'rlc'  #antenna type, can be rlc or log
+    inpAnt = inputAnt(times, inp, BW=300e6, type=atype) #BW is ignored for rlc filters
+    #plt.plot(inpAnt)
+    #plt.show()
+    #plt.plot(freqs, np.fft.rfft(inpAnt))
+    #plt.show()
+    
+    #For direct coupling: Mix with box response and output antenna
+    boxSig = sampleBoxResponse(times, inpAnt)
+    outpAntD = inputAnt(times, boxSig, type=atype)
+
+    plotr2(times, outpAntD, title='outpAntD')
+    #plot fft
+    outDF = np.fft.fft(outpAntD)
+    outDF = np.fft.fftshift(outDF)
+    #print len(outDF)
+    tf = np.arange(1, .5/(times[1]-times[0]) + 1, 1./times[-1])
+    #print len(tf)
+    #plotr(outDF)
+
+    #couple into yig
+    I0 = 2.2
+    currents = np.arange(I0-.15, I0+.2, .003)
+    data = []
+    datar = []
+    dataf = []
+    #currents = [2.2,2.31]
+    for I in currents:
+        #input coupling due to antenna shape
+        inpFFT = np.fft.fft(inpAnt)
+        inpFFT = np.fft.fftshift(inpFFT)
+        #inpFFT0 = inpFFT.copy()
+        for i in range(len(freqs)):
+            inpFFT[i] = inpFFT[i] * coupling(I, freqs[i])
+       
+        #Yig response
+        fresp = inYig3(freqs, inpFFT, I, f0, ad)
+
+        #outpYig = resp * coupling(I, f0)
+        outpFFT = fresp
+        for i in range(len(freqs)):
+            outpFFT[i] = outpFFT[i] * coupling(I, freqs[i])
+
+        #back to the time domain
+        outpFFT = np.fft.ifftshift(outpFFT)
+        outpYig = np.fft.ifft(outpFFT)
+
+        #total output: Yig plus direct coupling
+        output = outpYig + outpAntD
+        outputr = output
+        outputf = output
+
+        if (I >= 2.1499 and I <=2.1509) or (I >= 2.2099 and I <= 2.2109):
+            plt.plot(times, inp)
+            plt.plot(times, inpAnt)
+            plt.plot(times, np.fft.ifft(fresp))
+            plt.show()
+            #plt.plot(freqs, inpFFT0)
+            plt.plot(freqs, inpFFT)
+            plt.plot(freqs, fresp)
+            #plt.plot(times, output)
+            plt.show()
+            #return
+        
+        #filtering
+        lp = 3.5e9
+        hp = 7.2e9
+        #plt.plot(freqs, np.fft.fftshift(np.fft.fft(output)))
+        #plt.show()
+        b, a = signal.butter(5, [2*lp/sf, 2*hp/sf], btype = 'bandpass')
+        output = signal.lfilter(b, a, output)
+
+        #plotr(output)
+        
+        #mixing
+        #plt.plot(freqs, np.fft.rfft(output))
+        output *= np.sin(LO*2*np.pi*times)
+        #plt.plot(freqs, np.fft.rfft(output))
+        #plt.show()
+
+        #Only filter around 
+        df2 = 10
+        b, a = signal.butter(12, [2*(f0 - df2)/sf, 2*(f0 + df2)/sf], btype = 'bandpass')
+        outputf = signal.lfilter(b, a, outputf)
+
+
+        #more filtering
+        lp = 1.0e9
+        b, a = signal.butter(5, 2*lp/sf, btype = 'lowpass')
+        output = signal.lfilter(b, a, output)
+
+        #sample the data
+        samp = 2.5e9
+        mult = sf/samp
+        relSamp = int(samp/sf*len(output))
+        output = np.array([output[mult*i] for i in range(relSamp)])
+
+        #digital downconversion
+        times2 = np.arange(0, 800e-9, 0.4e-9)
+        sf2 = 1./(times2[1]-times2[0])
+        output *= np.exp(-1j*IF*2*np.pi*times2)
+        #TODO this isnt entirely correct
+        
+        #more filtering
+        lp = 62.5e6
+        b, a = signal.butter(5, 2*lp/sf2, btype = 'lowpass')
+        output = signal.lfilter(b, a, output)
+
+        ##more filtering
+        #lp = 62.5e6
+        #b, a = signal.butter(5, 2*lp/sf2, btype = 'lowpass')
+        #output = signal.lfilter(b, a, output)
+        
+        data.append(list(output))
+        datar.append(list(outputr))
+        dataf.append(list(outputf))
+
+
+    cmap = plt.cm.gnuplot
+    times = np.arange(0, 800e-9, 0.4e-9)
+
+    #raw
+    im0 = plt.imshow(np.transpose(abs(np.real(datar))), aspect='auto', origin='lower', cmap=cmap)
+    im0.set_extent([currents[0], currents[-1], times[0], times[800]])
+    plt.show()
+    
+    #bandpass filtered
+    im02 = plt.imshow(np.transpose(abs(np.real(dataf))), aspect='auto', origin='lower', cmap=cmap)
+    im02.set_extent([currents[0], currents[-1], times[0], times[800]])
+    ax02 = im02.get_axes()
+    ax02.set_title('bandPass filtered')
+    plt.show()
+    
+    #logplot
+    im01 = plt.imshow(np.transpose(np.log(abs(np.real(datar)))), aspect='auto', origin='lower', cmap=cmap)
+    ax01 = im01.get_axes()
+    ax01.set_title('logPlot raw')
+    im01.set_extent([currents[0], currents[-1], times[0], times[800]])
+    plt.show()
+    
+    #filtered etc
+    data = np.array(data)
+    frdat = np.real(data)
+    fidat = np.imag(data)
+    fsqdat = np.sqrt(np.abs(frdat*np.conj(frdat)) + np.abs(fidat*np.conj(fidat)))
+    fsqmdat = np.sqrt(np.abs(frdat*np.conj(frdat)) - np.abs(fidat*np.conj(fidat)))
+ 
+    fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
+    im1 = ax1.imshow(np.transpose(frdat), cmap=cmap, aspect=500000, origin='lower')
+    im2 = ax2.imshow(np.transpose(fidat), cmap=cmap, aspect=500000, origin='lower')
+    im3 = ax3.imshow(np.transpose(fsqdat), cmap=cmap, aspect=500000, origin='lower')
+    im4 = ax4.imshow(np.transpose(fsqmdat), cmap=cmap, aspect=500000, origin='lower')
+    im5 = ax5.imshow(np.transpose(abs(frdat)), cmap=cmap, aspect=500000, origin='lower')
+    im6 = ax6.imshow(np.transpose(abs(fidat)), cmap=cmap, aspect=500000, origin='lower')
+    im1.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im2.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im3.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im4.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im5.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im6.set_extent([currents[0], currents[-1], times[0], times[800]])
+    ax1.set_title('real')
+    plt.title('Filtered and stuff')
+    plt.show()
+
+    #raw data
+    rdat = np.real(datar)
+    idat = np.imag(datar)
+    sqdat = np.sqrt(np.abs(rdat*np.conj(rdat)) + np.abs(idat*np.conj(idat)))
+    sqmdat = np.sqrt(np.abs(rdat*np.conj(rdat)) - np.abs(idat*np.conj(idat)))
+
+    fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
+    im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower')
+    im2 = ax2.imshow(np.transpose(idat), cmap=cmap, aspect=500000, origin='lower')
+    im3 = ax3.imshow(np.transpose(sqdat), cmap=cmap, aspect=500000, origin='lower')
+    im4 = ax4.imshow(np.transpose(sqmdat), cmap=cmap, aspect=500000, origin='lower')
+    im5 = ax5.imshow(np.transpose(abs(rdat)), cmap=cmap, aspect=500000, origin='lower')
+    im6 = ax6.imshow(np.transpose(abs(idat)), cmap=cmap, aspect=500000, origin='lower')
+    im1.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im2.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im3.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im4.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im5.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im6.set_extent([currents[0], currents[-1], times[0], times[800]])
+    ax1.set_title('real')
+    plt.show()
+    #return pdata
+     
+def inYig3(freqs, inputF, I, f0, d=ad):
+    '''
+    Tries to find response of YIG to full frequency spectrum of the input signal.
+    '''
+    
+    tTime = 1./(freqs[1]-freqs[0])
+
+    #determine the YIG passband (in terms of our downconverted frequencies)
+    wH = wHI(I)
+    wMin = np.sqrt(wH*(wH+wM)) 
+    wMax = abs(wH + 0.5*wM)
+    output = np.zeros(len(inputF))
+    newWave = []
+
+    #find the time delay due to the magnon propagation
+    for i in range(len(freqs)):
+        f = freqs[i]
+        w = 2*np.pi*f
+        #A time delay by phase-adding in the FFT is a valid method for shifting the ENTIRE time series, so the shift should be the same for the entire frequency series as well.
+        #check the frequency is in the range of allowed MSSW frequencies
+        if ((w >= wMin and (w < wMax)) or ((w>-wMax) and (w<= -wMin))):
+            td = pulseDelay(I, f)#/tTime
+            #td = pulseDelay(I, f0, d) #TODO The above line caused the strange behaviour
+            #Dont doubleCount the delay by using w here again!
+            inputF[i] = inputF[i] * np.exp(-1j * f * td)
+            #inputF[i] = inputF[i] * np.exp(1j * vPhase(I, f) * td)
+            newWave.append(inputF[i])
+        else:
+            newWave.append(0)
+
+    newWave = np.array(newWave)
+    #before transforming back, shift fft back
+    #newWave = np.fft.ifftshift(newWave)
+    #newWave = np.fft.ifft(newWave)
+    #plt.plot(ti, amps)
+    #plt.plot(ti, newWave)
+    #plt.show()
+    
+    return newWave
+   
+
+def averages(av=5):
+    data = main(sin=True,noise=True)
+    times = np.arange(0, 796e-9, .4e-9)
+    I0 = 2.2
+    currents = np.arange(I0-.15, I0+.25, .001)
+    for i in range(av-1):
+        data += main(sin=True,noise=True)
+
+    cmap = plt.cm.gnuplot
+    im = plt.imshow(np.transpose(data), cmap=cmap, aspect=500000, origin='lower')
+    im.set_extent([currents[0], currents[-1], times[0], times[-1]])
+    plt.show()
+
+    #couple back out of yig
+
+    #mix with output antenna
+
+    #in the meantime: direct coupling, use data and interpolation?
+
+
+
+
+
+
+
+
+#=====================================================================================================================
+#---------------------------------------------PLOTTING----------------------------------------------------------------
+#=====================================================================================================================
+
+
+times = np.arange(0, 100e-9, 1e-9)
+
+def plot2dim():
+    plt.plot(times, pulse(times))
+    plt.xlabel('time (s)')
+    plt.show()
+
+def plotr2(xdata, ydata, title='None'):
+    plt.plot(xdata, ydata)
+    plt.title(title)
+    plt.show()
+
+def plotr(xdata, title='None'):
+    plt.plot(xdata)
+    plt.title(title)
+    plt.show()
+
+
+
 
 def main2(pulse='squ'):
     '''
@@ -507,6 +819,8 @@ def main2(pulse='squ'):
     boxSig = sampleBoxResponse(times, inpAnt)
     outpAntD = inputAnt(times, boxSig, type=atype)
 
+    plotr2(times, outpAntD)
+    return
     #plot fft
     outDF = np.fft.fft(outpAntD)
     outDF = np.fft.fftshift(outDF)
@@ -562,7 +876,7 @@ def main2(pulse='squ'):
         
         #filtering
         lp = 3.5e9
-        hp = 7.2e9
+        hp = 8.5e9
         #plt.plot(freqs, np.fft.fftshift(np.fft.fft(output)))
         #plt.show()
         b, a = signal.butter(5, [2*lp/sf, 2*hp/sf], btype = 'bandpass')
@@ -577,7 +891,7 @@ def main2(pulse='squ'):
         #plt.show()
 
         #Only filter around 
-        df2 = f0/sf/1e8
+        df2 = 20
         b, a = signal.butter(12, [f0/sf - df2, f0/sf + df2], btype = 'bandpass')
         outputf = signal.lfilter(b, a, outputf)
 
@@ -675,271 +989,5 @@ def inYig2(freqs, inputF, I, f0, d=ad):
     
     return newWave
    
-
-
-def main3(pulse='squ'):
-    '''
-    Try to do the simulation more fully - simulate the YIG interaction with much higher time resolution
-    and then apply all the measurement-like filtering that we actually use.
-    '''
-
-    #couplingConstant = .1
-    
-    times = np.arange(0, 800e-9, .03e-9)
-    sf = 1./(times[1]-times[0])
-    print 'sampling frequency', sf/1e9, ' GHz'
-    freqs = np.linspace(-sf/2,sf/2.,len(times))
-    #generate input pulse
-    if pulse == 'squ':
-        inp = squarePulseSin(times)
-    elif pulse == 'dc':
-        inp = squarePulse(times)
-    elif pulse == 'gauss':
-        inp = gaussPulse(times)
-
-    #mix with input antenna
-    atype = 'rlc'  #antenna type, can be rlc or log
-    inpAnt = inputAnt(times, inp, BW=300e6, type=atype) #BW is ignored for rlc filters
-    #plt.plot(inpAnt)
-    #plt.show()
-    #plt.plot(freqs, np.fft.rfft(inpAnt))
-    #plt.show()
-    
-    #For direct coupling: Mix with box response and output antenna
-    boxSig = sampleBoxResponse(times, inpAnt)
-    outpAntD = inputAnt(times, boxSig, type=atype)
-
-    #plot fft
-    outDF = np.fft.fft(outpAntD)
-    outDF = np.fft.fftshift(outDF)
-    #print len(outDF)
-    tf = np.arange(1, .5/(times[1]-times[0]) + 1, 1./times[-1])
-    #print len(tf)
-    #plotr(outDF)
-
-    #couple into yig
-    I0 = 2.2
-    currents = np.arange(I0-.15, I0+.2, .003)
-    data = []
-    datar = []
-    dataf = []
-    #currents = [2.2,2.31]
-    for I in currents:
-        #input coupling due to antenna shape
-        inpFFT = np.fft.fft(inpAnt)
-        inpFFT = np.fft.fftshift(inpFFT)
-        #inpFFT0 = inpFFT.copy()
-        for i in range(len(freqs)):
-            inpFFT[i] = inpFFT[i] * coupling(I, freqs[i])
-       
-        #Yig response
-        fresp = inYig3(freqs, inpFFT, I, f0, ad)
-
-        #outpYig = resp * coupling(I, f0)
-        outpFFT = fresp
-        for i in range(len(freqs)):
-            outpFFT[i] = outpFFT[i] * coupling(I, freqs[i])
-
-        #back to the time domain
-        outpFFT = np.fft.ifftshift(outpFFT)
-        outpYig = np.fft.ifft(outpFFT)
-
-        #total output: Yig plus direct coupling
-        output = outpYig + outpAntD
-        outputr = output
-        outputf = output
-
-        if (I >= 2.1499 and I <=2.1509) or (I >= 2.2099 and I <= 2.2109):
-            plt.plot(times, inp)
-            plt.plot(times, inpAnt)
-            plt.plot(times, np.fft.ifft(fresp))
-            plt.show()
-            #plt.plot(freqs, inpFFT0)
-            plt.plot(freqs, inpFFT)
-            plt.plot(freqs, fresp)
-            #plt.plot(times, output)
-            plt.show()
-            #return
-        
-        #filtering
-        lp = 3.5e9
-        hp = 7.2e9
-        #plt.plot(freqs, np.fft.fftshift(np.fft.fft(output)))
-        #plt.show()
-        b, a = signal.butter(5, [2*lp/sf, 2*hp/sf], btype = 'bandpass')
-        output = signal.lfilter(b, a, output)
-
-        #plotr(output)
-        
-        #mixing
-        #plt.plot(freqs, np.fft.rfft(output))
-        output *= np.sin(LO*2*np.pi*times)
-        #plt.plot(freqs, np.fft.rfft(output))
-        #plt.show()
-
-        #Only filter around 
-        df2 = f0/sf/1e8
-        b, a = signal.butter(12, [f0/sf - df2, f0/sf + df2], btype = 'bandpass')
-        outputf = signal.lfilter(b, a, outputf)
-
-
-        #more filtering
-        lp = 1.0e9
-        b, a = signal.butter(5, 2*lp/sf, btype = 'lowpass')
-        output = signal.lfilter(b, a, output)
-
-        #sample the data
-        relSamp = int(2.5e9/sf*len(output))
-        output = np.array([output[8*i] for i in range(relSamp)])
-
-        #digital downconversion
-        times2 = np.arange(0, 800e-9, 0.4e-9)
-        sf2 = 1./(times2[1]-times2[0])
-        output *= np.sin(IF*2*np.pi*times2)
-        #TODO this isnt entirely correct
-        
-        #more filtering
-        lp = 62.5e6
-        b, a = signal.butter(5, 2*lp/sf2, btype = 'lowpass')
-        output = signal.lfilter(b, a, output)
-        
-        data.append(list(abs(np.real(output))))
-        datar.append(list(outputr))
-        dataf.append(list(abs(np.real(outputf))))
-
-
-    cmap = plt.cm.gnuplot
-    times = np.arange(0, 800e-9, 0.4e-9)
-
-    #raw
-    im0 = plt.imshow(np.transpose(abs(np.real(datar))), aspect='auto', origin='lower', cmap=cmap)
-    im0.set_extent([currents[0], currents[-1], times[0], times[800]])
-    plt.show()
-    
-    #bandpass filtered
-    im02 = plt.imshow(np.transpose(dataf), aspect='auto', origin='lower', cmap=cmap)
-    im02.set_extent([currents[0], currents[-1], times[0], times[800]])
-    ax02 = im02.get_axes()
-    ax02.set_title('bandPass filtered')
-    plt.show()
-    
-    #logplot
-    im01 = plt.imshow(np.transpose(np.log(abs(np.real(datar)))), aspect='auto', origin='lower', cmap=cmap)
-    ax01 = im01.get_axes()
-    ax01.set_title('logPlot raw')
-    im01.set_extent([currents[0], currents[-1], times[0], times[800]])
-    plt.show()
-    
-    #plot a subset
-    data = np.array(data)
-    pdata = data[:,0:1600]
-    im = plt.imshow(np.transpose(pdata), cmap=cmap, aspect=500000, origin='lower')
-    im.set_extent([currents[0], currents[-1], times[0], times[800]])
-    plt.show()
-
-    rdat = np.real(datar)
-    idat = np.imag(datar)
-    sqdat = np.sqrt(np.abs(rdat*np.conj(rdat)) + np.abs(idat*np.conj(idat)))
-    sqmdat = np.sqrt(np.abs(rdat*np.conj(rdat)) - np.abs(idat*np.conj(idat)))
-
-    fig, ((ax1, ax2),(ax3, ax4)) = plt.subplots(2,2)
-    im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower')
-    im2 = ax2.imshow(np.transpose(idat), cmap=cmap, aspect=500000, origin='lower')
-    im3 = ax3.imshow(np.transpose(sqdat), cmap=cmap, aspect=500000, origin='lower')
-    im4 = ax4.imshow(np.transpose(sqmdat), cmap=cmap, aspect=500000, origin='lower')
-    im1.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im2.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im3.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im4.set_extent([currents[0], currents[-1], times[0], times[800]])
-    plt.show()
-    return pdata
-     
-def inYig3(freqs, inputF, I, f0, d=ad):
-    '''
-    Tries to find response of YIG to full frequency spectrum of the input signal.
-    '''
-    
-    tTime = 1./(freqs[1]-freqs[0])
-
-    #determine the YIG passband (in terms of our downconverted frequencies)
-    wH = wHI(I)
-    wMin = np.sqrt(wH*(wH+wM)) 
-    wMax = abs(wH + 0.5*wM)
-    output = np.zeros(len(inputF))
-    newWave = []
-
-    #find the time delay due to the magnon propagation
-    for i in range(len(freqs)):
-        f = freqs[i]
-        w = 2*np.pi*f
-        #A time delay by phase-adding in the FFT is a valid method for shifting the ENTIRE time series, so the shift should be the same for the entire frequency series as well.
-        #check the frequency is in the range of allowed MSSW frequencies
-        if ((w >= wMin and (w < wMax)) or ((w>-wMax) and (w<= -wMin))):
-            td = pulseDelay(I, f)#/tTime
-            #td = pulseDelay(I, f0, d) #TODO The above line caused the strange behaviour
-            #Dont doubleCount the delay by using w here again!
-            inputF[i] = inputF[i] * np.exp(-1j * f * td)
-            #inputF[i] = inputF[i] * np.exp(1j * vPhase(I, f) * td)
-            newWave.append(inputF[i])
-        else:
-            newWave.append(0)
-
-    newWave = np.array(newWave)
-    #before transforming back, shift fft back
-    #newWave = np.fft.ifftshift(newWave)
-    #newWave = np.fft.ifft(newWave)
-    #plt.plot(ti, amps)
-    #plt.plot(ti, newWave)
-    #plt.show()
-    
-    return newWave
-   
-
-def averages(av=5):
-    data = main(sin=True,noise=True)
-    times = np.arange(0, 796e-9, .4e-9)
-    I0 = 2.2
-    currents = np.arange(I0-.15, I0+.25, .001)
-    for i in range(av-1):
-        data += main(sin=True,noise=True)
-
-    cmap = plt.cm.gnuplot
-    im = plt.imshow(np.transpose(data), cmap=cmap, aspect=500000, origin='lower')
-    im.set_extent([currents[0], currents[-1], times[0], times[-1]])
-    plt.show()
-
-    #couple back out of yig
-
-    #mix with output antenna
-
-    #in the meantime: direct coupling, use data and interpolation?
-
-
-
-
-
-
-
-
-#=====================================================================================================================
-#---------------------------------------------PLOTTING----------------------------------------------------------------
-#=====================================================================================================================
-
-
-times = np.arange(0, 100e-9, 1e-9)
-
-def plot2dim():
-    plt.plot(times, pulse(times))
-    plt.xlabel('time (s)')
-    plt.show()
-
-def plotr2(xdata, ydata):
-    plt.plot(xdata, ydata)
-    plt.show()
-
-def plotr(xdata):
-    plt.plot(xdata)
-    plt.show()
-
 
 
