@@ -182,16 +182,16 @@ w0 = 2*np.pi * f0
 IF = 250e6
 LO = f0 - IF
 
-def squarePulse(t, dc = False):
+def squarePulse(t, dc = False, offset=0):
     if type(t) == np.ndarray:
-        k = [int(pulseStart < ti < (pulseStart + pulseLen)) for ti in t]
+        k = [int(pulseStart < ti < (pulseStart + pulseLen)) + offset for ti in t]
         return k * pulseAmp
     elif (type(t) == int) or (type(t) == float):
         return int(pulseStart < t < (pulseStart+pulseLen))
 
-def squarePulseSin(t):
+def squarePulseSin(t, offset=0):
     if type(t) == np.ndarray:
-        k = [np.sin(w0*ti) * int(pulseStart < ti < (pulseStart + pulseLen)) for ti in t]
+        k = [np.sin(w0*ti) * (int(pulseStart < ti < (pulseStart + pulseLen)) + offset) for ti in t]
         return k * pulseAmp
     elif (type(t) == int) or (type(t) == float):
         return int(pulseStart < t < (pulseStart+pulseLen))
@@ -208,7 +208,8 @@ def gaussPulse(t, DC=False):
     return k*pulseAmp
 
 def couplingk(k):
-    return (.5*(1 + np.cos(k*aw))) * int( k < pi/aw)
+    A = 1.2 #random coupling enhancer
+    return (A * .5*(1 + np.cos(2*k*aw))) * int( k < .5* pi/aw)
 
 def coupling(I, f):
     k = k_f(I,f)
@@ -241,7 +242,7 @@ def inputAnt(tx, amps, BW=400e6, type='lor', plot=False):
         #C = .002e-8
         #B1 = .4
         #B2 = 1
-        R = .1
+        R = .02
         L = .001e-9
         C = .1e-9
         B1 = .4
@@ -259,8 +260,8 @@ def inputAnt(tx, amps, BW=400e6, type='lor', plot=False):
 def sampleBoxResponse(tx, amps, plot=False):
     #parameters
     R = .1
-    L = .1e-9
-    C = .1e-9
+    L = .01e-9
+    C = .01e-9
     B1 = 0
     B2 = 1
 
@@ -361,7 +362,7 @@ def main(pulse='dc'):
     if pulse == 'squ':
         inp = squarePulseSin(times, noise)
     elif pulse == 'dc':
-        inp = squarePulse(times)
+        inp = squarePulse(times, offset=.02)
     elif pulse == 'gauss':
         inp = gaussPulse(times)
     elif pulse == 'gaussDC':
@@ -375,13 +376,11 @@ def main(pulse='dc'):
     boxSig = sampleBoxResponse(times, inpAnt)
     outpAntD = inputAnt(times, boxSig, type=atype)
 
-    plotr2(times, outpAntD)
-    return
-    #plotr(outpAntD)
+    plotr2(times, outpAntD, title='outpAntD')
 
     #couple into yig
     I0 = 2.2
-    currents = np.arange(I0-.15, I0+.2, .001)
+    currents = np.arange(I0-.1, I0+.2, .001)
     data = []
     for I in currents:
         #input coupling due to antenna shape
@@ -415,19 +414,18 @@ def main(pulse='dc'):
             #plt.plot(times, output)
             plt.show()
             #return
-        
-
         data.append(list(output))
 
     #plot a subset
+
     data = np.array(data)
-    pdata = data[:,0:]
+    pdata = data[:,0:800]
     cmap = plt.cm.gnuplot
 
     rdat = np.real(pdata)
     idat = np.imag(pdata)
     sqdat = np.sqrt(rdat*np.conj(rdat) + idat*np.conj(idat))
-    sqmdat = np.sqrt(rdat*np.conj(rdat) - idat*np.conj(idat))
+    sqmdat = np.sqrt(abs(rdat*np.conj(rdat) - idat*np.conj(idat)))
 
     fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
     im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower')
@@ -443,6 +441,12 @@ def main(pulse='dc'):
     im5.set_extent([currents[0], currents[-1], times[0], times[800]])
     im6.set_extent([currents[0], currents[-1], times[0], times[800]])
     ax1.set_title('real')
+    ax2.set_title('imag')
+    ax3.set_title('i^2 + q^2')
+    ax4.set_title('i^2 - q^2')
+    ax5.set_title('abs(real)')
+    ax6.set_title('abs(imag)')
+    fig.suptitle('shifted version')
     plt.show()
 
     #return pdata
@@ -469,16 +473,13 @@ def inYig(freqs, inputF, I, f0, d=ad):
         f = freqs[i]
         w = 2*np.pi*(f + f0)
         #check the frequency is in the range of allowed MSSW frequencies
-        if ((w > wMin) and (w < wMax)) or ((w>-wMax) and (w<-wMin)):
+        xF = 2*pi*1e9
+        if (((w >= wMin - xF) and (w < wMax + xF)) or ((w>-wMax-xF) and (w<= -wMin +xF))):
+        #if ((w > wMin) and (w < wMax)) or ((w>-wMax) and (w<-wMin)):
+            #td = pulseDelay(I, f)#/tTime
             td = pulseDelay(I, f + f0) #TODO The above line caused the strange behaviour
-            logf = 10e6
-            #if -logf < f < logf:
-                #print 'total time is ', tTime
-                #print 'delay as part of 2 pi is ', td
-                #print 'time delay direct is ', td*tTime / 1e-9, ' ns'
-            #if within the YIG band, apply the appropriate phase shift
-            #td = pulseDelay(I, freqs[i] + f0, d)
-            inputF[i] = inputF[i] * np.exp(-1j * td * (f+f0))
+            #TODO Warning! This is cast to real numbers!
+            inputF[i] = np.complex(inputF[i]) * np.exp(-1j * td * (f+f0))
             #inputF[i] = inputF[i] * np.real(np.exp(1j * vPhase(I, freqs[i] + f0) * td))
             newWave.append(inputF[i]) #* np.real(np.exp(-1j - vPhase(I, freqs[i]))))#  * (1-(w-wMin)/1e10))
         else:
@@ -501,7 +502,7 @@ def main3(pulse='squ'):
     freqs = np.linspace(-sf/2,sf/2.,len(times))
     #generate input pulse
     if pulse == 'squ':
-        inp = squarePulseSin(times)
+        inp = squarePulseSin(times, offset=.03)
     elif pulse == 'dc':
         inp = squarePulse(times)
     elif pulse == 'gauss':
@@ -530,11 +531,19 @@ def main3(pulse='squ'):
 
     #couple into yig
     I0 = 2.2
-    currents = np.arange(I0-.15, I0+.2, .003)
+    currents = np.arange(I0-.05, I0+.2, .0005)
     data = []
     datar = []
     dataf = []
-    #currents = [2.2,2.31]
+    
+    #examine yig filter
+    wH = wHI(I0)
+    wMin = np.sqrt(wH*(wH+wM))
+    #wMin -= 2*pi*1000e6
+    wMax = abs(wH + 0.5*wM)
+    print 'wMin is ', wMin/(1e9 * 2 * pi), ' GHz'
+    print 'wMax is ', wMax/(1e9 * 2 * pi), ' GHz'
+
     for I in currents:
         #input coupling due to antenna shape
         inpFFT = np.fft.fft(inpAnt)
@@ -589,7 +598,7 @@ def main3(pulse='squ'):
         #plt.show()
 
         #Only filter around 
-        df2 = 10
+        df2 = 1e6
         b, a = signal.butter(12, [2*(f0 - df2)/sf, 2*(f0 + df2)/sf], btype = 'bandpass')
         outputf = signal.lfilter(b, a, outputf)
 
@@ -599,16 +608,17 @@ def main3(pulse='squ'):
         b, a = signal.butter(5, 2*lp/sf, btype = 'lowpass')
         output = signal.lfilter(b, a, output)
 
-        #sample the data
+        #sample the data: Voltage only!
         samp = 2.5e9
         mult = sf/samp
+        #output = np.real(output) # voltage only
         relSamp = int(samp/sf*len(output))
         output = np.array([output[mult*i] for i in range(relSamp)])
+        ntimes = np.array([times[mult*i] for i in range(relSamp)])
 
         #digital downconversion
-        times2 = np.arange(0, 800e-9, 0.4e-9)
-        sf2 = 1./(times2[1]-times2[0])
-        output *= np.exp(-1j*IF*2*np.pi*times2)
+        sf2 = 1./abs(ntimes[1]-ntimes[0])
+        output *= np.exp(-1j*IF*2*np.pi*ntimes)
         #TODO this isnt entirely correct
         
         #more filtering
@@ -626,72 +636,106 @@ def main3(pulse='squ'):
         dataf.append(list(outputf))
 
 
+    fTime = 800
+    data = np.array(data)
+    pdata = data[:,:fTime]
+
     cmap = plt.cm.gnuplot
     times = np.arange(0, 800e-9, 0.4e-9)
 
     #raw
-    im0 = plt.imshow(np.transpose(abs(np.real(datar))), aspect='auto', origin='lower', cmap=cmap)
-    im0.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im0 = plt.imshow(np.transpose(abs(np.real(datar))), aspect='auto', origin='lower', interpolation='none',cmap=cmap)
+    im0.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    ax0 = im0.get_axes()
+    ax0.set_title('Raw Data')
     plt.show()
     
     #bandpass filtered
-    im02 = plt.imshow(np.transpose(abs(np.real(dataf))), aspect='auto', origin='lower', cmap=cmap)
-    im02.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im02 = plt.imshow(np.transpose(abs(np.real(dataf))), aspect='auto', origin='lower', cmap=cmap, interpolation='none')
+    im02.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
     ax02 = im02.get_axes()
     ax02.set_title('bandPass filtered')
     plt.show()
     
     #logplot
-    im01 = plt.imshow(np.transpose(np.log(abs(np.real(datar)))), aspect='auto', origin='lower', cmap=cmap)
-    ax01 = im01.get_axes()
-    ax01.set_title('logPlot raw')
-    im01.set_extent([currents[0], currents[-1], times[0], times[800]])
-    plt.show()
+    #im01 = plt.imshow(np.transpose(np.log(abs(np.real(datar)))), aspect='auto', origin='lower', cmap=cmap, interpolation='none')
+    #ax01 = im01.get_axes()
+    #ax01.set_title('logPlot raw')
+    #im01.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    #plt.show()
     
     #filtered etc
-    data = np.array(data)
-    frdat = np.real(data)
-    fidat = np.imag(data)
+    data = np.array(pdata)
+    frdat = np.real(pdata)
+    fidat = np.imag(pdata)
     fsqdat = np.sqrt(np.abs(frdat*np.conj(frdat)) + np.abs(fidat*np.conj(fidat)))
-    fsqmdat = np.sqrt(np.abs(frdat*np.conj(frdat)) - np.abs(fidat*np.conj(fidat)))
+    fsqmdat = np.sqrt(abs(np.abs(frdat*np.conj(frdat)) - np.abs(fidat*np.conj(fidat))))
+
+    #detail plot
+    fig, (ax1, ax2) = plt.subplots(2)
+    im03 = ax1.imshow(np.transpose(fsqdat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im04 = ax2.imshow(np.transpose(np.log(fsqdat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    ax1.set_title('sqrt(I^2 + Q^1), filtered')
+    ax2.set_title('real(dat), filtered')
+    im03.set_extent([currents[0], currents[-1], ntimes[0], times[fTime]])
+    im04.set_extent([currents[0], currents[-1], ntimes[0], times[fTime]])
+
  
-    fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
-    im1 = ax1.imshow(np.transpose(frdat), cmap=cmap, aspect=500000, origin='lower')
-    im2 = ax2.imshow(np.transpose(fidat), cmap=cmap, aspect=500000, origin='lower')
-    im3 = ax3.imshow(np.transpose(fsqdat), cmap=cmap, aspect=500000, origin='lower')
-    im4 = ax4.imshow(np.transpose(fsqmdat), cmap=cmap, aspect=500000, origin='lower')
-    im5 = ax5.imshow(np.transpose(abs(frdat)), cmap=cmap, aspect=500000, origin='lower')
-    im6 = ax6.imshow(np.transpose(abs(fidat)), cmap=cmap, aspect=500000, origin='lower')
-    im1.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im2.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im3.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im4.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im5.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im6.set_extent([currents[0], currents[-1], times[0], times[800]])
+    fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6),(ax7, ax8)) = plt.subplots(4,2)
+    im1 = ax1.imshow(np.transpose(frdat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im2 = ax2.imshow(np.transpose(fidat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im3 = ax3.imshow(np.transpose(fsqdat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im4 = ax4.imshow(np.transpose(fsqmdat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im5 = ax5.imshow(np.transpose(abs(frdat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im6 = ax6.imshow(np.transpose(abs(fidat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im6 = ax6.imshow(np.transpose(abs(fidat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im7 = ax7.imshow(np.transpose(np.log(fsqdat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im8 = ax8.imshow(np.transpose(np.log(fsqmdat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im1.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im2.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im3.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im4.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im5.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im6.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im7.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im8.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
     ax1.set_title('real')
-    plt.title('Filtered and stuff')
+    ax2.set_title('imag')
+    ax3.set_title('i^2 + q^2')
+    ax4.set_title('i^2 - q^2')
+    ax5.set_title('abs(real)')
+    ax6.set_title('abs(imag)')
+    ax7.set_title('log ( i^2 + q^2 )')
+    ax8.set_title('log ( i^2 - q^2 )')
+    plt.suptitle('Filtered and stuff')
     plt.show()
 
-    #raw data
+    #data
     rdat = np.real(datar)
     idat = np.imag(datar)
     sqdat = np.sqrt(np.abs(rdat*np.conj(rdat)) + np.abs(idat*np.conj(idat)))
     sqmdat = np.sqrt(np.abs(rdat*np.conj(rdat)) - np.abs(idat*np.conj(idat)))
 
     fig, ((ax1, ax2),(ax3, ax4), (ax5, ax6)) = plt.subplots(3,2)
-    im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower')
-    im2 = ax2.imshow(np.transpose(idat), cmap=cmap, aspect=500000, origin='lower')
-    im3 = ax3.imshow(np.transpose(sqdat), cmap=cmap, aspect=500000, origin='lower')
-    im4 = ax4.imshow(np.transpose(sqmdat), cmap=cmap, aspect=500000, origin='lower')
-    im5 = ax5.imshow(np.transpose(abs(rdat)), cmap=cmap, aspect=500000, origin='lower')
-    im6 = ax6.imshow(np.transpose(abs(idat)), cmap=cmap, aspect=500000, origin='lower')
-    im1.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im2.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im3.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im4.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im5.set_extent([currents[0], currents[-1], times[0], times[800]])
-    im6.set_extent([currents[0], currents[-1], times[0], times[800]])
+    im1 = ax1.imshow(np.transpose(rdat), cmap=cmap, aspect=500000, origin='lower', interpolation='none')
+    im2 = ax2.imshow(np.transpose(idat), cmap=cmap, aspect=500000, origin='lower', interpolation='none')
+    im3 = ax3.imshow(np.transpose(sqdat), cmap=cmap, aspect=500000, origin='lower', interpolation='none')
+    im4 = ax4.imshow(np.transpose(sqmdat), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im5 = ax5.imshow(np.transpose(abs(rdat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im6 = ax6.imshow(np.transpose(abs(idat)), cmap=cmap, aspect=500000, origin='lower',interpolation='none')
+    im1.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im2.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im3.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im4.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im5.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
+    im6.set_extent([currents[0], currents[-1], ntimes[0], ntimes[fTime]])
     ax1.set_title('real')
+    ax2.set_title('imag')
+    ax3.set_title('i^2 + q^2')
+    ax4.set_title('i^2 - q^2')
+    ax5.set_title('abs(real)')
+    ax6.set_title('abs(imag)')
+    plt.suptitle('Before DC etc')
     plt.show()
     #return pdata
      
@@ -715,11 +759,16 @@ def inYig3(freqs, inputF, I, f0, d=ad):
         w = 2*np.pi*f
         #A time delay by phase-adding in the FFT is a valid method for shifting the ENTIRE time series, so the shift should be the same for the entire frequency series as well.
         #check the frequency is in the range of allowed MSSW frequencies
-        if ((w >= wMin and (w < wMax)) or ((w>-wMax) and (w<= -wMin))):
+        xF = 0*2*pi*1e9
+        #if ((w >= wMin and (w < wMax)) or ((w>-wMax) and (w<= -wMin))):
+        #if ((w >= wMin and (w < wMax + xF)) or ((w>-wMax-xF) and (w<= -wMin))):
+        #if (((w >= wMin - xF) and (w < wMax + xF)) or ((w>-wMax-xF) and (w<= -wMin +xF))):
+        if abs(w) < wMax:
             td = pulseDelay(I, f)#/tTime
             #td = pulseDelay(I, f0, d) #TODO The above line caused the strange behaviour
             #Dont doubleCount the delay by using w here again!
-            inputF[i] = inputF[i] * np.exp(-1j * f * td)
+            #TODO Warning! This is cast to real numbers!
+            inputF[i] = np.complex(inputF[i]) * np.exp(-1j * f * td)
             #inputF[i] = inputF[i] * np.exp(1j * vPhase(I, f) * td)
             newWave.append(inputF[i])
         else:
